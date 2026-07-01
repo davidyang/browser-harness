@@ -102,10 +102,57 @@ def _ws_from_devtools_active_port(http_url: str) -> str | None:
     return None
 
 
+def _maybe_launch_cft(cdp_url):
+    """Auto-start the dedicated Chrome-for-Testing automation browser when
+    BU_CDP_URL points at it and it isn't up yet, so browser work "just works" in
+    a fresh session with nobody remembering to run the launcher.
+
+    Opt-in and generic: only fires when BH_CFT_LAUNCHER names a launch script and
+    the endpoint is loopback. No-op when the endpoint already answers. The 30s
+    connect loop in get_ws_url() then waits for the browser to expose the port.
+    """
+    launcher = os.environ.get("BH_CFT_LAUNCHER")
+    if not launcher:
+        return
+    p = urlparse(cdp_url)
+    if (p.hostname or "") not in ("127.0.0.1", "localhost", "::1"):
+        return
+    base = cdp_url.rstrip("/")
+    try:
+        urllib.request.urlopen(f"{base}/json/version", timeout=1).close()
+        return  # already running
+    except Exception:
+        pass
+    import subprocess
+    try:
+        subprocess.Popen(
+            ["/bin/bash", launcher],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,  # detach so CfT outlives this daemon
+        )
+        log(f"auto-launching Chrome for Testing via {launcher}")
+    except Exception as e:
+        log(f"CfT auto-launch failed ({launcher}): {e}")
+        return
+    # Wait for the sentinel (a real, non-internal page) to load before returning,
+    # so attach_first_page() lands on it instead of racing ahead and spawning a
+    # stray about:blank tab.
+    list_url = f"{base}/json"
+    for _ in range(75):  # ~15s
+        try:
+            targets = json.loads(urllib.request.urlopen(list_url, timeout=1).read())
+            if any(t.get("type") == "page" and not (t.get("url") or "").startswith(INTERNAL) for t in targets):
+                return
+        except Exception:
+            pass
+        time.sleep(0.2)
+
+
 def get_ws_url():
     if url := os.environ.get("BU_CDP_WS"):
         return url
     if url := os.environ.get("BU_CDP_URL"):
+        _maybe_launch_cft(url)  # bring up the dedicated CfT if this is it and it's down
         # HTTP DevTools endpoint (e.g. http://127.0.0.1:9333) — resolve to ws via /json/version.
         # Use this for a dedicated automation Chrome on a non-default profile, which avoids the
         # M144 "Allow remote debugging" dialog and the M136 default-profile lockdown.
@@ -201,7 +248,10 @@ class Daemon:
         pages = [t for t in targets if is_real_page(t)]
         if not pages:
             # No real pages - create one instead of attaching to omnibox popup.
-            tid = (await self.cdp.send_raw("Target.createTarget", {"url": "about:blank"}))["targetId"]
+            create_params = {"url": "about:blank"}
+            if os.environ.get("BH_NO_ACTIVATE") == "1":
+                create_params["background"] = True  # Mac-only: don't raise the window.
+            tid = (await self.cdp.send_raw("Target.createTarget", create_params))["targetId"]
             log(f"no real pages found, created about:blank ({tid})")
             pages = [{"targetId": tid, "url": "about:blank", "type": "page"}]
         self.session = (await self.cdp.send_raw(
