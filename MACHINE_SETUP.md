@@ -9,7 +9,9 @@ This branch turns browser-harness into a driver for a **dedicated Chrome for Tes
 - **Auto-launch** — any `browser-harness` call starts CfT if it's the configured endpoint
   and not already running, so a fresh session never has to remember a launch command.
 - **Clean launches** — CfT never session-restores, so tabs/sentinels don't accumulate.
-- **Auto-closing tabs** — a `tab()` context manager disposes throwaway tabs and re-anchors.
+- **Auto-closing tabs** — every call prunes back to the sentinel + the tab it ended on
+  (`BH_PRUNE_TABS`), so query tabs don't pile up; the `tab()` context manager also scopes
+  throwaway tabs explicitly.
 
 It is macOS + Apple-Silicon oriented (CfT path glob is `mac_arm-*`); adjust for other
 platforms where noted.
@@ -20,7 +22,7 @@ platforms where noted.
 
 | Piece | Location | In this git branch? |
 |---|---|---|
-| Core patches (`BH_NO_ACTIVATE` gate, `_maybe_launch_cft`) | `src/browser_harness/{helpers,daemon}.py` | **Yes** |
+| Core patches (`BH_NO_ACTIVATE` gate, `_maybe_launch_cft`, tab prune) | `src/browser_harness/{helpers,daemon,run}.py` | **Yes** |
 | Config: `.env`, `agent_helpers.py` | `~/.config/browser-harness/agent-workspace/` | No — see below |
 | Launcher + anchor page | `~/.config/browser-harness/cft/{launch-cft.sh,sentinel.html}` | No — see below |
 | CfT binary | `~/.cache/puppeteer/chrome/...` | No — installed per machine |
@@ -40,6 +42,10 @@ so a machine without them can be set up from this file alone.
   `_maybe_launch_cft()` called from `get_ws_url()` that, when `BH_CFT_LAUNCHER` is set and the
   loopback CfT endpoint is down, runs the launcher and waits for a real page to load before
   attaching (so the daemon lands on the sentinel instead of spawning a stray `about:blank`).
+- **`run.py`** — after each script runs, `_maybe_prune_tabs()` (gated on `BH_PRUNE_TABS=1`)
+  closes leftover automation tabs, keeping the sentinel and the tab the call ended on — so
+  query tabs don't accumulate, while a tab you're iterating on across calls survives. Aborts
+  safely if the sentinel can't be identified (never closes the anchor).
 
 Both are gated/opt-in: with none of the env vars set, behavior is identical to upstream.
 
@@ -141,6 +147,10 @@ with tab("https://example.com") as tid:
 - **CfT starts clean each launch.** Only the sentinel (plus whatever automation opens) — the
   launcher deletes SNSS session files so tabs don't accumulate. Cookies/logins persist; manually
   opened tabs do **not** survive a restart. Use your normal Chrome if you want durable tabs.
+- **Tab pruning closes tabs you open manually too.** `BH_PRUNE_TABS=1` closes every tab
+  except the sentinel and the one the last call ended on — it can't tell an automation tab from
+  one you opened by hand. This window is for automation; browse manually in regular Chrome. Unset
+  `BH_PRUNE_TABS` to keep every tab.
 - **`.env` makes CfT the default target.** Every `browser-harness` call now hits `:9333`. If CfT
   can't be started, calls fail after ~30s. Comment out `BU_CDP_URL` + `browser-harness --reload`
   to fall back to normal Chrome.
@@ -162,6 +172,7 @@ with tab("https://example.com") as tid:
 BU_CDP_URL=http://127.0.0.1:9333
 BH_NO_ACTIVATE=1
 BH_CFT_LAUNCHER=/Users/dyang/.config/browser-harness/cft/launch-cft.sh
+BH_PRUNE_TABS=1
 ```
 
 ### `~/.config/browser-harness/cft/sentinel.html`

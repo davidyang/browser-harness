@@ -115,6 +115,33 @@ def _telemetry_command(args):
     return "usage"
 
 
+def _maybe_prune_tabs():
+    """After a run, close leftover automation tabs so they don't accumulate,
+    keeping the sentinel and the tab this run ended on (so multi-call work on a
+    tab still survives). Opt-in via BH_PRUNE_TABS=1. Aborts safely if the
+    sentinel can't be identified, so it never closes the anchor by mistake.
+    """
+    if os.environ.get("BH_PRUNE_TABS") != "1" or "ensure_sentinel" not in globals():
+        return
+    try:
+        sentinel = ensure_sentinel()
+        if not sentinel:
+            return
+        keep = {sentinel}
+        try:
+            cur = current_tab().get("targetId")
+            if cur:
+                keep.add(cur)
+        except Exception:
+            pass
+        for t in list_tabs(include_chrome=False):
+            if t.get("targetId") not in keep:
+                try: close_tab(t["targetId"])
+                except Exception: pass
+    except Exception:
+        pass
+
+
 def main():
     args = sys.argv[1:]
     if not (args and args[0] == "telemetry"):
@@ -177,7 +204,10 @@ def main():
         ):
             start_remote_daemon(NAME)
         ensure_daemon()
-    exec(code, globals())
+    try:
+        exec(code, globals())
+    finally:
+        _maybe_prune_tabs()
 
 
 if __name__ == "__main__":
