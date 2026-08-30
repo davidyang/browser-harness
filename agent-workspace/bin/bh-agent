@@ -1,0 +1,37 @@
+#!/bin/zsh
+set -euo pipefail
+
+if (( $# < 1 )); then
+  print -u2 'usage: bh-agent <short-stable-agent-name> [--stop|browser-harness arguments]'
+  exit 2
+fi
+
+agent_name="$1"
+shift
+
+if [[ ! "$agent_name" =~ '^[A-Za-z0-9_-]{1,24}$' ]]; then
+  print -u2 'agent name must contain 1–24 letters, digits, underscores, or hyphens'
+  exit 2
+fi
+
+workspace_dir="${0:A:h:h}"
+port="${BH_BRAVE_PORT:-9333}"
+
+export BU_NAME="agent-${agent_name}"
+export BU_CDP_URL="http://127.0.0.1:${port}"
+export BH_AGENT_WORKSPACE="$workspace_dir"
+export BH_RUNTIME_DIR="/private/tmp/bh-${agent_name}"
+export BH_TMP_DIR="/private/tmp/bh-${agent_name}-tmp"
+
+if (( $# == 1 )) && [[ "$1" == "--stop" ]]; then
+  if browser-harness doctor --json --require-existing-daemon >/dev/null 2>&1; then
+    print 'cleanup_agent_tabs()' | browser-harness >/dev/null 2>&1 || true
+  fi
+  exec browser-harness --reload
+fi
+
+"$workspace_dir/bin/launch-brave" >/dev/null
+
+# Ensure the anchor exists even if somebody closed it while Brave stayed open.
+print 'ensure_sentinel()' | browser-harness >/dev/null
+exec browser-harness "$@"

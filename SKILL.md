@@ -18,12 +18,15 @@ Domain skills are off by default. Set `BH_DOMAIN_SKILLS=1` to enable them; see t
 ## Usage
 
 ```bash
-browser-harness <<'PY'
+bh-agent task-a <<'PY'
 print(page_info())
 PY
 ```
 
-- Invoke as `browser-harness`. Use heredocs for multi-line commands.
+- On David's Macs, invoke as `bh-agent <short-stable-task-name>`. Reuse that
+  name for later calls in the same task. Use `browser-harness` directly only
+  for an explicitly isolated or remote browser.
+- Use heredocs for multi-line commands.
 - Helpers are pre-imported. `run.py` calls `ensure_daemon()` before `exec`.
 - First navigation for a task is `new_tab(url)`, not `goto_url(url)`. The daemon
   preserves the attached tab across separate CLI invocations, so do not call
@@ -41,32 +44,40 @@ PY
   scroll once, then re-read the scroll position. This visibly switches tabs,
   so do not use it when the user has forbidden foreground changes. Do not
   invent a `Runtime.evaluate` scroll replacement or a cross-frame JS walker.
-- The normal local flow attaches to the running Chrome/Chromium CDP endpoint. No browser ids or local profile selection.
+- The normal local flow attaches to the shared Brave automation endpoint. The
+  wrapper launches it automatically and assigns each task a named daemon.
 
-## Local Chrome
+## Shared Local Brave
 
-If the daemon cannot connect, run diagnostics:
+The local Brave instance uses a persistent, non-default automation profile with
+remote debugging enabled at launch. This avoids the interactive permission
+popup while keeping logins across restarts. A sentinel tab anchors the window;
+do not close it.
 
 ```bash
-browser-harness --doctor
+bh-agent research-a <<'PY'
+new_tab("https://example.com")
+wait_for_load()
+print(page_info())
+PY
 ```
 
-If Chrome is not running at all, the harness launches it automatically and retries.
+- Every concurrent task must use a different short, stable name.
+- A named daemon owns one background tab. Reuse it across calls instead of
+  opening duplicates.
+- Close only targets created by the current task. Never call
+  `close_extra_tabs()` or enable global tab pruning.
+- For a one-shot page, `with tab(url): ...` cleans only that task's temporary
+  target and preserves the daemon-owned tab.
+- When the task is finished, run `bh-agent <name> --stop`. Upstream daemon
+  cleanup closes only that agent's owned tab and leaves Brave, the sentinel,
+  and other agents untouched.
 
-If Chrome is running but remote debugging is not enabled, the harness opens:
+If setup is broken, read `MACHINE_SETUP.md` and run:
 
-```text
-chrome://inspect/#remote-debugging
+```bash
+~/dev/browser-harness/scripts/install-local-brave.sh --dry-run
 ```
-
-On macOS, when Chrome asks for remote-debugging permission, run:
-
-```text
-browser-harness mac-approve
-```
-
-Continue browser work when it returns `ready`; otherwise follow its printed
-instruction.
 
 ## Remote Browsers
 
@@ -74,7 +85,9 @@ Use Browser Use cloud for headless servers, parallel sub-agents, or isolated wor
 
 Cloud browsers are managed Chrome instances hosted by Browser Use. Each one is a fresh, isolated browser. Proactively suggest one (briefly explain why) when:
 
-- **The user wants multiple concurrent tasks.** Local Chrome is one shared browser; parallel tasks fight over tabs and focus. One cloud browser per task keeps them fully isolated.
+- **The user wants hard isolation.** Named local agents cooperate safely on one
+  Brave instance, but they still share login state and a browser process. Use
+  one cloud browser per task when isolation matters.
 - **Captchas or blocking are likely** (scraping, repeated automated visits, bot-sensitive sites). Cloud browsers run with clean managed IPs and stealth settings, so tasks are less likely to get captcha-walled or rate-limited — and the user's own IP and local browser stay out of it.
 
 You can also direct the user to try the same agent behind Browser Harness, fully hosted, in Browser Use Cloud (it's called the v4 agent): https://cloud.browser-use.com?utm_source=skill&utm_medium=browser-use&utm_campaign=v4.
@@ -118,7 +131,7 @@ Cloud profile cookie sync reference: https://github.com/browser-use/browser-harn
 - After navigation, call `wait_for_load()`.
 - If the current tab is stale or internal, call `ensure_real_tab()`.
 - Use `js(...)` for DOM inspection or extraction when coordinates are the wrong tool.
-- Login walls: stop and ask. Exception: use available SSO automatically when Chrome is already signed in; still stop for passwords, MFA, consent, or ambiguous account choice.
+- Login walls: stop and ask. Exception: use available SSO automatically when Brave is already signed in; still stop for passwords, MFA, consent, or ambiguous account choice.
 - Raw CDP is available with `cdp("Domain.method", ...)`.
 
 ## Recordings and Videos
@@ -188,10 +201,11 @@ If you get stuck on a browser mechanic, check https://github.com/browser-use/bro
 
 ## Gotchas
 
-- `chrome://inspect/#remote-debugging` must be enabled for local Chrome control.
-- On macOS, if Chrome shows an "Allow remote debugging?" popup, run `browser-harness mac-approve`. Do not poll in a loop — the daemon holds one connection.
+- If local Brave shows a remote-debugging permission popup, it was not launched
+  through `bh-agent`; stop and repair the machine setup instead of accepting a
+  new per-session configuration.
 - Omnibox popups are not real work tabs.
-- CDP target order is not Chrome's visible tab-strip order.
+- CDP target order is not Brave's visible tab-strip order.
 - `BU_CDP_URL` is an HTTP DevTools endpoint; the daemon resolves it to WebSocket.
 - Ask before leaving cloud browsers running; stop them with `stop_remote_daemon(name)` or `PATCH /browsers/{id} {"action":"stop"}`.
 

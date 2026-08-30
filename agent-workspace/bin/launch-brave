@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PORT="${BH_BRAVE_PORT:-9333}"
+PROFILE="${BH_BRAVE_PROFILE:-$HOME/Library/Application Support/BraveSoftware/Brave-Browser-Automation}"
+BRAVE="${BH_BRAVE_PATH:-/Applications/Brave Browser.app/Contents/MacOS/Brave Browser}"
+WORKSPACE_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+SENTINEL="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().as_uri())' "$WORKSPACE_DIR/sentinel.html")"
+ENDPOINT="http://127.0.0.1:${PORT}"
+
+probe() {
+  curl -fsS --max-time 1 "${ENDPOINT}/json/version" 2>/dev/null
+}
+
+endpoint_matches_profile() {
+  local version_json="$1"
+  local active_port active_path
+  active_port="$(sed -n '1p' "$PROFILE/DevToolsActivePort" 2>/dev/null || true)"
+  active_path="$(sed -n '2p' "$PROFILE/DevToolsActivePort" 2>/dev/null || true)"
+  [[ "$active_port" == "$PORT" && -n "$active_path" ]] && \
+    printf '%s' "$version_json" | grep -Fq "$active_path"
+}
+
+if version_json="$(probe)"; then
+  if endpoint_matches_profile "$version_json"; then
+    echo "Brave automation is ready on ${ENDPOINT}"
+    exit 0
+  fi
+  echo "Port ${PORT} is already occupied by a non-Brave CDP endpoint" >&2
+  exit 1
+fi
+
+if [[ ! -x "$BRAVE" ]]; then
+  echo "Brave executable not found: $BRAVE" >&2
+  exit 1
+fi
+
+mkdir -p "$PROFILE"
+chmod 700 "$PROFILE" 2>/dev/null || true
+
+# This is a dedicated automation profile. A clean tab session prevents crashed
+# or abandoned agent tabs from being restored; cookies and logins live elsewhere
+# in the profile and are preserved.
+if [[ "${BH_BRAVE_KEEP_SESSION:-0}" != "1" ]]; then
+  rm -f "$PROFILE/Default/Sessions/"Session_* \
+        "$PROFILE/Default/Sessions/"Tabs_* \
+        "$PROFILE/Default/Current Session" \
+        "$PROFILE/Default/Current Tabs" \
+        "$PROFILE/Default/Last Session" \
+        "$PROFILE/Default/Last Tabs" 2>/dev/null || true
+fi
+
+nohup "$BRAVE" \
+  --remote-debugging-port="$PORT" \
+  --remote-debugging-address=127.0.0.1 \
+  --user-data-dir="$PROFILE" \
+  --no-first-run \
+  --no-default-browser-check \
+  --disable-session-crashed-bubble \
+  --hide-crash-restore-bubble \
+  "$SENTINEL" \
+  >/dev/null 2>&1 &
+
+for _ in $(seq 1 75); do
+  if version_json="$(probe)" && endpoint_matches_profile "$version_json"; then
+    echo "Brave automation is ready on ${ENDPOINT}"
+    echo "  profile: $PROFILE"
+    echo "  sentinel: $SENTINEL"
+    exit 0
+  fi
+  sleep 0.2
+done
+
+echo "Brave did not expose ${ENDPOINT} within 15 seconds" >&2
+exit 1
