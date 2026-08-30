@@ -76,7 +76,8 @@ def test_global_tab_cleanup_is_disabled(monkeypatch, tmp_path):
 def test_shared_wrapper_uses_named_daemon_and_brave_endpoint():
     text = (ROOT / "agent-workspace" / "bin" / "bh-agent").read_text()
     assert 'export BU_NAME="agent-${agent_name}"' in text
-    assert 'export BU_CDP_URL="http://127.0.0.1:${port}"' in text
+    assert 'export BU_CDP_WS="ws://127.0.0.1:${active_port}${active_path}"' in text
+    assert "DevToolsActivePort" in text
     assert '"$workspace_dir/bin/launch-brave"' in text
 
 

@@ -21,7 +21,7 @@ This branch adds only:
 
 | File | Responsibility |
 |---|---|
-| `agent-workspace/bin/launch-brave` | Idempotently launch the dedicated Brave profile on port 9333 |
+| `agent-workspace/bin/launch-brave` | Idempotently launch the dedicated Brave profile on a dynamic loopback port |
 | `agent-workspace/bin/bh-agent` | Assign a stable named daemon and shared Brave endpoint |
 | `agent-workspace/sentinel.html` | Keep the automation window anchored |
 | `agent-workspace/agent_helpers.py` | Recover the sentinel and provide scoped temporary-tab cleanup |

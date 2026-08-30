@@ -1,33 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PORT="${BH_BRAVE_PORT:-9333}"
 PROFILE="${BH_BRAVE_PROFILE:-$HOME/Library/Application Support/BraveSoftware/Brave-Browser-Automation}"
+BRAVE_APP="${BH_BRAVE_APP:-Brave Browser}"
 BRAVE="${BH_BRAVE_PATH:-/Applications/Brave Browser.app/Contents/MacOS/Brave Browser}"
 WORKSPACE_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 SENTINEL="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().as_uri())' "$WORKSPACE_DIR/sentinel.html")"
-ENDPOINT="http://127.0.0.1:${PORT}"
+ACTIVE_PORT_FILE="$PROFILE/DevToolsActivePort"
 
-probe() {
-  curl -fsS --max-time 1 "${ENDPOINT}/json/version" 2>/dev/null
-}
-
-endpoint_matches_profile() {
-  local version_json="$1"
+active_endpoint() {
   local active_port active_path
-  active_port="$(sed -n '1p' "$PROFILE/DevToolsActivePort" 2>/dev/null || true)"
-  active_path="$(sed -n '2p' "$PROFILE/DevToolsActivePort" 2>/dev/null || true)"
-  [[ "$active_port" == "$PORT" && -n "$active_path" ]] && \
-    printf '%s' "$version_json" | grep -Fq "$active_path"
+  active_port="$(sed -n '1p' "$ACTIVE_PORT_FILE" 2>/dev/null || true)"
+  active_path="$(sed -n '2p' "$ACTIVE_PORT_FILE" 2>/dev/null || true)"
+  [[ "$active_port" =~ ^[0-9]+$ && "$active_path" == /devtools/browser/* ]] || return 1
+  printf '%s\n%s\n' "$active_port" "$active_path"
 }
 
-if version_json="$(probe)"; then
-  if endpoint_matches_profile "$version_json"; then
-    echo "Brave automation is ready on ${ENDPOINT}"
-    exit 0
-  fi
-  echo "Port ${PORT} is already occupied by a non-Brave CDP endpoint" >&2
-  exit 1
+endpoint_is_live() {
+  local endpoint active_port active_path version_json
+  endpoint="$(active_endpoint)" || return 1
+  active_port="$(printf '%s\n' "$endpoint" | sed -n '1p')"
+  active_path="$(printf '%s\n' "$endpoint" | sed -n '2p')"
+  version_json="$(curl -fsS --max-time 1 "http://127.0.0.1:${active_port}/json/version" 2>/dev/null)" || return 1
+  printf '%s' "$version_json" | grep -Fq "$active_path"
+}
+
+if endpoint_is_live; then
+  active_port="$(sed -n '1p' "$ACTIVE_PORT_FILE")"
+  echo "Brave automation is ready on http://127.0.0.1:${active_port}"
+  exit 0
 fi
 
 if [[ ! -x "$BRAVE" ]]; then
@@ -37,6 +38,7 @@ fi
 
 mkdir -p "$PROFILE"
 chmod 700 "$PROFILE" 2>/dev/null || true
+rm -f "$ACTIVE_PORT_FILE"
 
 # This is a dedicated automation profile. A clean tab session prevents crashed
 # or abandoned agent tabs from being restored; cookies and logins live elsewhere
@@ -50,20 +52,21 @@ if [[ "${BH_BRAVE_KEEP_SESSION:-0}" != "1" ]]; then
         "$PROFILE/Default/Last Tabs" 2>/dev/null || true
 fi
 
-nohup "$BRAVE" \
-  --remote-debugging-port="$PORT" \
+open -na "$BRAVE_APP" --args \
+  --remote-debugging-port=0 \
   --remote-debugging-address=127.0.0.1 \
+  '--remote-allow-origins=*' \
   --user-data-dir="$PROFILE" \
   --no-first-run \
   --no-default-browser-check \
   --disable-session-crashed-bubble \
   --hide-crash-restore-bubble \
-  "$SENTINEL" \
-  >/dev/null 2>&1 &
+  "$SENTINEL"
 
 for _ in $(seq 1 75); do
-  if version_json="$(probe)" && endpoint_matches_profile "$version_json"; then
-    echo "Brave automation is ready on ${ENDPOINT}"
+  if endpoint_is_live; then
+    active_port="$(sed -n '1p' "$ACTIVE_PORT_FILE")"
+    echo "Brave automation is ready on http://127.0.0.1:${active_port}"
     echo "  profile: $PROFILE"
     echo "  sentinel: $SENTINEL"
     exit 0
@@ -71,5 +74,6 @@ for _ in $(seq 1 75); do
   sleep 0.2
 done
 
-echo "Brave did not expose ${ENDPOINT} within 15 seconds" >&2
+echo "Brave did not publish a live DevToolsActivePort within 15 seconds." >&2
+echo "If the dedicated automation profile is already running with a stale endpoint, quit that Brave instance and retry." >&2
 exit 1

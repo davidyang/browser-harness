@@ -15,15 +15,27 @@ if [[ ! "$agent_name" =~ '^[A-Za-z0-9_-]{1,24}$' ]]; then
 fi
 
 workspace_dir="${0:A:h:h}"
-port="${BH_BRAVE_PORT:-9333}"
+profile="${BH_BRAVE_PROFILE:-$HOME/Library/Application Support/BraveSoftware/Brave-Browser-Automation}"
 
 export BU_NAME="agent-${agent_name}"
-export BU_CDP_URL="http://127.0.0.1:${port}"
 export BH_AGENT_WORKSPACE="$workspace_dir"
 export BH_RUNTIME_DIR="/private/tmp/bh-${agent_name}"
 export BH_TMP_DIR="/private/tmp/bh-${agent_name}-tmp"
 
+load_brave_endpoint() {
+  local active_port active_path
+  active_port="$(sed -n '1p' "$profile/DevToolsActivePort" 2>/dev/null || true)"
+  active_path="$(sed -n '2p' "$profile/DevToolsActivePort" 2>/dev/null || true)"
+  if [[ "$active_port" =~ '^[0-9]+$' && "$active_path" == /devtools/browser/* ]]; then
+    unset BU_CDP_URL
+    export BU_CDP_WS="ws://127.0.0.1:${active_port}${active_path}"
+    return 0
+  fi
+  return 1
+}
+
 if (( $# == 1 )) && [[ "$1" == "--stop" ]]; then
+  load_brave_endpoint || true
   if browser-harness doctor --json --require-existing-daemon >/dev/null 2>&1; then
     print 'cleanup_agent_tabs()' | browser-harness >/dev/null 2>&1 || true
   fi
@@ -31,6 +43,10 @@ if (( $# == 1 )) && [[ "$1" == "--stop" ]]; then
 fi
 
 "$workspace_dir/bin/launch-brave" >/dev/null
+load_brave_endpoint || {
+  print -u2 'Brave started but its DevToolsActivePort is invalid'
+  exit 1
+}
 
 # Ensure the anchor exists even if somebody closed it while Brave stayed open.
 print 'ensure_sentinel()' | browser-harness >/dev/null
