@@ -1,8 +1,27 @@
 import asyncio
+import os
 
 import pytest
 
 from browser_harness import daemon
+
+
+def test_publish_own_pid_never_truncates_parent_record(tmp_path, monkeypatch):
+    pid_file = tmp_path / "daemon.pid"
+    pid_file.write_text('{"pid":4321,"started":"process start with spaces"}')
+    real_replace = os.replace
+    observed = []
+
+    def replace(src, dst):
+        observed.append(pid_file.read_text())
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", replace)
+    daemon._publish_own_pid(pid_file, pid=4321)
+
+    expected = '{"pid":4321,"started":"process start with spaces"}'
+    assert observed == [expected]
+    assert pid_file.read_text() == expected
 
 
 @pytest.mark.parametrize(
@@ -72,6 +91,58 @@ def _fresh_daemon():
     d = daemon.Daemon()
     d.cdp = _FakeCDP()
     return d
+
+
+@pytest.mark.parametrize("value", ["0", "false", "NO", "off"])
+def test_tab_marker_can_be_disabled_before_set_session_schedules_it(monkeypatch, value):
+    monkeypatch.setenv("BH_TAB_MARKER", value)
+    d = _fresh_daemon()
+
+    async def run():
+        await d.handle({
+            "meta": "set_session",
+            "session_id": "session-without-marker",
+            "target_id": "target-without-marker",
+        })
+        await asyncio.sleep(0)
+
+    asyncio.run(run())
+
+    assert not [call for call in d.cdp.calls if call[0] == "Runtime.evaluate"]
+
+
+def test_tab_marker_stays_enabled_by_default(monkeypatch):
+    monkeypatch.delenv("BH_TAB_MARKER", raising=False)
+    d = _fresh_daemon()
+
+    async def run():
+        await d.handle({
+            "meta": "set_session",
+            "session_id": "session-with-marker",
+            "target_id": "target-with-marker",
+        })
+        await asyncio.sleep(0)
+
+    asyncio.run(run())
+
+    assert [call for call in d.cdp.calls if call[0] == "Runtime.evaluate"] == [
+        (
+            "Runtime.evaluate",
+            {"expression": daemon.TAB_MARKER_JS},
+            "session-with-marker",
+        )
+    ]
+
+
+@pytest.mark.parametrize("value", ["0", "false", "NO", "off"])
+def test_tab_marker_disabled_on_page_load_events(monkeypatch, value):
+    monkeypatch.setenv("BH_TAB_MARKER", value)
+    d = _fresh_daemon()
+    d.session = "loaded-session"
+
+    d._record_event("Page.loadEventFired", {}, "loaded-session")
+
+    assert not [call for call in d.cdp.calls if call[0] == "Runtime.evaluate"]
 
 
 def test_set_session_enables_all_four_default_domains_on_new_session():

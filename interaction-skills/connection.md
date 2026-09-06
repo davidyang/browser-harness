@@ -4,7 +4,7 @@
 
 When Chrome opens fresh, the only CDP `type: "page"` targets are `chrome://inspect` and `chrome://omnibox-popup.top-chrome/` (a 1px invisible viewport). If the daemon attaches to the omnibox popup, all subsequent work — including `new_tab()` and `goto_url()` — happens on tabs that exist in CDP but may not be visible in the Chrome UI.
 
-The daemon's `attach_first_page()` handles this by creating an `about:blank` tab when no real pages exist. If you still end up on an invisible tab, use `switch_tab()` to attach to the real tab; call `activate_tab()` only when Chrome must visibly show it.
+The daemon's `attach_first_page()` handles this by creating an `about:blank` tab when no real pages exist. If you still end up on an invisible tab, use `switch_tab()` to attach to the real tab. Call `activate_tab()` only when the user explicitly asks Chrome to visibly show it.
 
 ## Startup sequence
 
@@ -12,7 +12,7 @@ The daemon's `attach_first_page()` handles this by creating an `about:blank` tab
 2. If stale sockets exist but daemon is dead, clean them up
 3. List open tabs with `list_tabs()` to see what's available
 4. `ensure_real_tab()` attaches to a real page
-5. `switch_tab(target_id)` attaches without changing the visible Chrome tab; use `activate_tab(target_id)` for an explicit visible switch
+5. `switch_tab(target_id)` attaches without changing the visible Chrome tab; use `activate_tab(target_id)` only for a user-requested visible switch
 
 ```python
 if not daemon_alive():

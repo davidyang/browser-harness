@@ -49,10 +49,10 @@ Use your local browser for logged-in, personal work. When you want many browsers
 
 ## MCP server
 
-`mcp_server.py` exposes the browser control helpers as MCP tools over stdio,
-so any MCP client (Claude Code, Devin, Cursor, etc.) can drive the browser
-without writing a second CDP layer. See [docs/MCP.md](docs/MCP.md) for setup and
-client configuration.
+`browser-harness-mcp` exposes the browser control helpers as MCP tools over
+stdio, so any MCP client (Claude Code, Devin, Cursor, etc.) can drive the
+browser without writing a second CDP layer. See [docs/MCP.md](docs/MCP.md) for
+setup and client configuration.
 
 ## Contributing
 

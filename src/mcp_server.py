@@ -8,7 +8,7 @@ Run:
 
 The server starts on stdio and exposes one MCP tool per browser-harness
 helper. Each tool ensures the daemon is running, calls the existing helper,
-and returns JSON text. Errors are caught and returned as {"error": ...}.
+and returns JSON text. Helper failures use MCP's tool-error channel.
 """
 import functools
 import json
@@ -21,15 +21,16 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from PIL import Image
 
 from browser_harness.admin import ensure_daemon
 from browser_harness.helpers import (
     capture_screenshot,
+    cdp,
     click_at_xy,
     close_tab,
-    cdp,
     current_tab,
     ensure_real_tab,
     fill_input,
@@ -115,8 +116,8 @@ def _stderr_stdout():
 def _tool(fn):
     """Wrap a helper so it is exposed as an MCP tool and returns JSON text.
 
-    Ensures the daemon is up, runs the helper, catches exceptions (including
-    daemon startup failures), and always returns a JSON string. Tool name and
+    Ensures the daemon is up, runs the helper, and converts operational failures
+    (including daemon startup failures) into MCP tool errors. Tool name and
     description are taken from the wrapped function so the schema matches the
     parameter annotations.
     """
@@ -128,8 +129,8 @@ def _tool(fn):
             with _stderr_stdout():
                 result = fn(*args, **kwargs)
             return _dump(result)
-        except Exception as exc:
-            return _dump({"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001 -- browser failures must reach the MCP client.
+            raise ToolError(str(exc)) from exc
 
     return SERVER.tool(name=fn.__name__, description=fn.__doc__ or "")(wrapper)
 
@@ -259,7 +260,7 @@ def browser_js(expression: str, target_id: str | None = None):
 
 
 @_tool
-def browser_cdp(method: str, params: dict = {}):
+def browser_cdp(method: str, params: dict | None = None):
     """Call a raw Chrome DevTools Protocol method. `params` are passed as kwargs."""
     return cdp(method, **(params or {}))
 
@@ -290,5 +291,10 @@ def browser_stop_recording():
     return {"recording_dir": stop_recording()}
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Run the Browser Harness MCP server over stdio."""
     SERVER.run()
+
+
+if __name__ == "__main__":
+    main()

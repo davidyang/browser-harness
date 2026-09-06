@@ -3,7 +3,7 @@
 Core helpers live here. Agent-editable helpers live in
 BH_AGENT_WORKSPACE/agent_helpers.py.
 """
-import base64, importlib.util, json, math, os, sys, time, urllib.request
+import base64, importlib.util, json, math, os, time, urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -196,6 +196,15 @@ def click_at_xy(x, y, button="left", clicks=1):
 def type_text(text):
     cdp("Input.insertText", text=text)
 
+_SELECT_ALL_MODIFIER = None
+def _select_all_modifier():
+    """Select-all modifier by the browser's OS (not this process's): 4=Meta on macOS, else 2=Ctrl."""
+    global _SELECT_ALL_MODIFIER
+    if _SELECT_ALL_MODIFIER is None:
+        ua = cdp("Browser.getVersion").get("userAgent", "")
+        _SELECT_ALL_MODIFIER = 4 if "Mac OS X" in ua or "Macintosh" in ua else 2
+    return _SELECT_ALL_MODIFIER
+
 def fill_input(selector, text, clear_first=True, timeout=0.0):
     """Fill a framework-managed input (React controlled, Vue v-model, Ember tracked).
 
@@ -220,11 +229,13 @@ def fill_input(selector, text, clear_first=True, timeout=0.0):
         # `char` event for single-char keys. With Ctrl/Cmd held, that `char`
         # makes Chrome treat the input as a printable "a" instead of firing the
         # select-all shortcut, leaving the field uncleared.
-        mods = 4 if sys.platform == "darwin" else 2  # Cmd on macOS, Ctrl elsewhere
+        mods = _select_all_modifier()
         select_all = {"key": "a", "code": "KeyA", "modifiers": mods,
-                      "windowsVirtualKeyCode": 65, "nativeVirtualKeyCode": 65}
+                      "windowsVirtualKeyCode": 65, "nativeVirtualKeyCode": 65,
+                      "commands": ["SelectAll"]}
         cdp("Input.dispatchKeyEvent", type="rawKeyDown", **select_all)
-        cdp("Input.dispatchKeyEvent", type="keyUp", **select_all)
+        cdp("Input.dispatchKeyEvent", type="keyUp",
+            **{k: v for k, v in select_all.items() if k != "commands"})
         press_key("Backspace")
     for ch in text:
         press_key(ch)
@@ -243,11 +254,67 @@ _KEYS = {  # key → (windowsVirtualKeyCode, code, text)
     "Home": (36, "Home", ""), "End": (35, "End", ""),
     "PageUp": (33, "PageUp", ""), "PageDown": (34, "PageDown", ""),
 }
+# US-layout physical keys for printable ASCII punctuation: char → (code, virtual key).
+# `code` names the physical key, so it is layout-independent and never the
+# character itself; the virtual key code is the Win32 VK_OEM_* value, which is
+# unrelated to ord(char) for everything except A-Z and 0-9.
+_PUNCTUATION_KEYS = {
+    "`": ("Backquote", 192), "-": ("Minus", 189), "=": ("Equal", 187),
+    "[": ("BracketLeft", 219), "]": ("BracketRight", 221), "\\": ("Backslash", 220),
+    ";": ("Semicolon", 186), "'": ("Quote", 222), ",": ("Comma", 188),
+    ".": ("Period", 190), "/": ("Slash", 191),
+}
+# Characters a US layout only produces with Shift held, mapped to the unshifted
+# character that shares their physical key.
+_SHIFTED_CHARS = {
+    "~": "`", "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6",
+    "&": "7", "*": "8", "(": "9", ")": "0", "_": "-", "+": "=",
+    "{": "[", "}": "]", "|": "\\", ":": ";", '"': "'", "<": ",", ">": ".", "?": "/",
+}
+
+
+def _printable_key(char):
+    """(code, virtual key, needs_shift) for one printable ASCII char on a US layout.
+
+    None when the character has no US physical key — accented letters, CJK,
+    emoji. Those still insert from the char event's text, and inventing a
+    keyboard key for them would just be a different wrong answer.
+    """
+    unshifted = _SHIFTED_CHARS.get(char, char)
+    needs_shift = char in _SHIFTED_CHARS or char.isupper()
+    if unshifted.isascii() and "a" <= unshifted.lower() <= "z":
+        return f"Key{unshifted.upper()}", ord(unshifted.upper()), needs_shift
+    if unshifted.isdigit() and unshifted.isascii():
+        return f"Digit{unshifted}", ord(unshifted), needs_shift
+    if unshifted in _PUNCTUATION_KEYS:
+        code, vk = _PUNCTUATION_KEYS[unshifted]
+        return code, vk, needs_shift
+    return None
+
+
 def press_key(key, modifiers=0):
     """Modifiers bitfield: 1=Alt, 2=Ctrl, 4=Meta(Cmd), 8=Shift.
-    Special keys (Enter, Tab, Arrow*, Backspace, etc.) carry their virtual key codes
-    so listeners checking e.keyCode / e.key all fire."""
-    vk, code, text = _KEYS.get(key, (ord(key[0]) if len(key) == 1 else 0, key, key if len(key) == 1 else ""))
+
+    Named keys (Enter, Tab, Arrow*, Backspace, ...) and printable characters alike
+    carry the physical `code` and virtual key code a real US keyboard sends, so
+    listeners reading e.key, e.code and e.keyCode all agree. A character that
+    needs Shift on that layout (uppercase, !@#$...) sets the Shift modifier too,
+    unless the caller is already composing a shortcut with Alt/Ctrl/Meta — there,
+    the caller's intent wins over the physical truth.
+    """
+    if key in _KEYS:
+        vk, code, text = _KEYS[key]
+    elif len(key) == 1:
+        text = key
+        resolved = _printable_key(key)
+        if resolved:
+            code, vk, needs_shift = resolved
+            if needs_shift and not modifiers & (1 | 2 | 4):
+                modifiers |= 8
+        else:
+            code, vk = "", 0
+    else:
+        vk, code, text = 0, key, ""
     base = {"key": key, "code": code, "modifiers": modifiers, "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk}
     shortcut_modifiers = modifiers & (1 | 2 | 4)  # Alt/Ctrl/Meta turn single keys into shortcuts.
     printable_char = len(key) == 1 and bool(text) and not shortcut_modifiers
@@ -320,6 +387,8 @@ def current_tab():
 
 def _mark_tab():
     """Prepend horse emoji to tab title so the user can see which tab the agent controls."""
+    if os.environ.get("BH_TAB_MARKER", "").strip().lower() in {"0", "false", "no", "off"}:
+        return
     try: cdp("Runtime.evaluate", expression="if(!document.title.startsWith('\U0001F434'))document.title='\U0001F434 '+document.title")
     except Exception: pass
 
@@ -499,10 +568,39 @@ def js(expression, target_id=None):
     """
     sid = cdp("Target.attachToTarget", targetId=target_id, flatten=True)["sessionId"] if target_id else None
     try:
+        result = _js_evaluate(expression, sid)
+    except BaseException:
+        # Keep the evaluation error; a detach failure here must not replace it.
+        if sid:
+            try:
+                _detach_iframe_session(sid)
+            except BaseException:
+                pass
+        raise
+    if sid:
+        _detach_iframe_session(sid)
+    return result
+
+
+def _js_evaluate(expression, sid):
+    try:
         return _runtime_evaluate(expression, session_id=sid, await_promise=True)
     except RuntimeError as e:
         if _is_illegal_return_error(e):
             return _runtime_evaluate(_wrap_js_function(expression), session_id=sid, await_promise=True)
+        raise
+
+
+def _detach_iframe_session(sid):
+    """Release the session js(target_id=...) attached so polling loops do not
+    accumulate one live session (and one event stream) per call. A session that
+    Chrome already dropped (iframe navigated or closed) is not a leak."""
+    try:
+        cdp("Target.detachFromTarget", sessionId=sid)
+    except Exception as e:
+        message = str(e).lower()
+        if "no session with given id" in message or "session with given id not found" in message:
+            return
         raise
 
 

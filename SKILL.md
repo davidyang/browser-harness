@@ -1,6 +1,6 @@
 ---
 name: browser-harness
-description: "Always use browser-harness for any web interaction: automation, scraping, testing, or site/app work."
+description: "Control a real browser via CDP: clicking, typing, navigation, logged-in sessions, JS-rendered or bot-protected pages. Not for plain HTTP fetches of public content - use curl for those."
 ---
 
 # browser-harness
@@ -35,15 +35,23 @@ PY
   `current_tab()` and `list_tabs()` and use `switch_tab()` to reuse a matching
   tab. Do not leave duplicate tabs on the same URL or close tabs you did not
   create.
+- At task completion, close tabs created for the task that are no longer needed.
+  Keep a tab open if the user needs to see it, it is needed for a known follow-up,
+  or closing it could discard unsaved work or other important state.
 - `new_tab()` and `switch_tab()` attach and move the horse marker without
   changing Chrome's visible tab. Screenshots and normal CDP input work in the
-  background; call `activate_tab(target)` only when the user explicitly asks
-  or a page demonstrably pauses rendering while hidden.
-- A timed-out `scroll(...)` on an attached background tab is evidence that the
-  page needs to be visible. Call `activate_tab(current_tab())`, retry the same
-  scroll once, then re-read the scroll position. This visibly switches tabs,
-  so do not use it when the user has forbidden foreground changes. Do not
-  invent a `Runtime.evaluate` scroll replacement or a cross-frame JS walker.
+  background. Never call `activate_tab(target)` automatically: it brings Brave
+  to the foreground. Call it only when the user explicitly asks to see or
+  visibly switch to that tab. Do not pair `switch_tab()` with `activate_tab()`.
+- Set `BH_TAB_MARKER=0` before starting the daemon to leave page titles unchanged.
+  The horse marker remains enabled by default.
+- A timeout or page that pauses while hidden is not permission to foreground
+  Brave. Keep using background CDP operations. For a focus-gated page,
+  temporarily call `cdp("Emulation.setFocusEmulationEnabled", enabled=True)`,
+  perform and verify the operation, then disable it in a `finally` block. If
+  background control still cannot work, report that limitation instead of
+  activating the tab. Do not invent a `Runtime.evaluate` scroll replacement or
+  a cross-frame JS walker.
 - The normal local flow attaches to the shared Brave automation endpoint. The
   wrapper launches it automatically and assigns each task a named daemon.
 
@@ -82,6 +90,12 @@ If setup is broken, read `MACHINE_SETUP.md` and run:
 ## Remote Browsers
 
 Use Browser Use cloud for headless servers, parallel sub-agents, or isolated work.
+
+Remote browsers require Browser Use Cloud authentication. Check
+`browser-harness auth status` before depending on them. `browser-harness auth
+login` stores authentication for later processes, so an API key does not need to
+be passed to every agent process; without stored authentication or an available
+`BROWSER_USE_API_KEY`, serialize work through the default local daemon instead.
 
 Cloud browsers are managed Chrome instances hosted by Browser Use. Each one is a fresh, isolated browser. Proactively suggest one (briefly explain why) when:
 
@@ -131,6 +145,7 @@ Cloud profile cookie sync reference: https://github.com/browser-use/browser-harn
 - After navigation, call `wait_for_load()`.
 - If the current tab is stale or internal, call `ensure_real_tab()`.
 - Use `js(...)` for DOM inspection or extraction when coordinates are the wrong tool.
+- When entering unusually long text, avoid slow per-character typing: find a faster page-appropriate input method, then verify the page kept the exact value.
 - Login walls: stop and ask. Exception: use available SSO automatically when Brave is already signed in; still stop for passwords, MFA, consent, or ambiguous account choice.
 - Raw CDP is available with `cdp("Domain.method", ...)`.
 

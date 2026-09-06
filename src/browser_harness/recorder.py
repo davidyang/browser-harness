@@ -302,7 +302,11 @@ def _capture(d, helper, args=(), kwargs=None, duration=None):
         # `str(e) or ...` because an exception raised bare (no args) stringifies
         # to "", which would record a useless "SomeError: " and defeat the point.
         event["frame_error"] = f"{type(e).__name__}: {str(e) or 'no detail'}"[:200]
-    with (d / "events.jsonl").open("a", encoding="utf-8") as f:
+    # Page-controlled strings (document.title etc.) can carry lone surrogates
+    # in through CDP's \uDXXX escapes; they can't encode as UTF-8, and one
+    # would kill the whole trace. Replace with U+FFFD — same medicine run.py
+    # already gives stdout (#124).
+    with (d / "events.jsonl").open("a", encoding="utf-8", errors="replace") as f:
         f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 

@@ -1,15 +1,15 @@
 # Browser Harness MCP Server
 
-The MCP server in `mcp_server.py` exposes `browser_harness.helpers` as MCP tools.
+The `browser-harness-mcp` command exposes `browser_harness.helpers` as MCP tools.
 It reuses the existing helper layer — no second CDP implementation and no changes
 inside `src/browser_harness/`.
 
 ## Start
 
-From the repo root:
+From any directory:
 
 ```bash
-uv run --extra mcp python -m mcp_server
+uvx --from 'browser-harness[mcp]' browser-harness-mcp
 ```
 
 The server speaks MCP stdio and connects to the same local Chrome CDP endpoint
@@ -57,20 +57,18 @@ server process keeps running.
 
 ## Client configuration
 
-Replace `<path-to-repo>` with your checkout path.
-
 ### Claude Code
 
 ```bash
 claude mcp add browser-harness \
-  uv --directory <path-to-repo> run --extra mcp python -m mcp_server
+  uvx --from 'browser-harness[mcp]' browser-harness-mcp
 ```
 
 ### Devin
 
 ```bash
 devin mcp add -s project browser-harness -- \
-  uv --directory <path-to-repo> run --extra mcp python -m mcp_server
+  uvx --from 'browser-harness[mcp]' browser-harness-mcp
 ```
 
 ### Cursor / OpenClaw / other MCP clients
@@ -79,16 +77,11 @@ devin mcp add -s project browser-harness -- \
 {
   "mcpServers": {
     "browser-harness": {
-      "command": "uv",
+      "command": "uvx",
       "args": [
-        "--directory",
-        "<path-to-repo>",
-        "run",
-        "--extra",
-        "mcp",
-        "python",
-        "-m",
-        "mcp_server"
+        "--from",
+        "browser-harness[mcp]",
+        "browser-harness-mcp"
       ]
     }
   }
@@ -99,5 +92,8 @@ devin mcp add -s project browser-harness -- \
 
 ```bash
 npx @modelcontextprotocol/inspector \
-  uv --directory <path-to-repo> run --extra mcp python -m mcp_server
+  uvx --from 'browser-harness[mcp]' browser-harness-mcp
 ```
+
+From a repository checkout, `uv run --extra mcp browser-harness-mcp` runs the
+same packaged entry point against the current source.
