@@ -81,6 +81,15 @@ PY
   cleanup closes only that agent's owned tab and leaves Brave, the sentinel,
   and other agents untouched.
 
+If a CDP command times out, stop the named daemon with `bh-agent <name> --stop`
+and retry once with a fresh daemon. If browser-level CDP still responds but
+session-scoped commands such as `Page.*`, `Runtime.*`, `DOM.*`, or `Network.*`
+time out again, the dedicated Brave CDP process is wedged: gracefully restart
+only the Brave process using the `Brave-Browser-Automation` profile, then run
+`agent-workspace/bin/launch-brave` and retry the original command. This closes
+automation tabs but preserves that profile's cookies and logins; leave other
+Brave profiles untouched.
+
 If setup is broken, read `MACHINE_SETUP.md` and run:
 
 ```bash
