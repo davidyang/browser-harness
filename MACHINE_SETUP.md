@@ -1,28 +1,28 @@
-# Local setup: shared Brave automation
+# Local setup: persistent Brave automation instances
 
 This branch keeps Browser Harness core code aligned with upstream `main` and
 adds a machine layer for David's Macs:
 
-- a persistent, non-default Brave automation profile;
+- persistent, non-default Brave profiles selected by logical instance name;
 - command-line remote debugging on loopback, avoiding the permission popup;
 - a sentinel tab that keeps the automation window alive;
-- one named daemon and owned background tab per agent;
+- one Brave process per instance and one named daemon per agent;
 - cleanup that closes only the stopping agent's owned tab; and
 - a repository-owned `agent-workspace` linked into the machine configuration.
 
 ## Difference from upstream main
 
-There are no custom patches under `src/browser_harness/`. Current upstream
-already opens and switches tabs in the background, gives named local daemons a
-dedicated tab, recovers that tab safely, and closes only that owned tab when the
-daemon stops.
+The machine layer owns instance selection and lifecycle. Two small core helpers
+generate a durable instance label in controlled tab titles; upstream continues
+to own CDP transport, tab attachment, and daemon recovery.
 
 This branch adds only:
 
 | File | Responsibility |
 |---|---|
 | `agent-workspace/bin/launch-brave` | Idempotently launch the dedicated Brave profile on a dynamic loopback port |
-| `agent-workspace/bin/bh-agent` | Assign a stable named daemon and shared Brave endpoint |
+| `agent-workspace/bin/bh-agent` | Select an instance, assign a named daemon, and expose scoped restart |
+| `agent-workspace/browser_instance.py` | Resolve profiles/endpoints and verify exact process ownership |
 | `agent-workspace/sentinel.html` | Keep the automation window anchored |
 | `agent-workspace/agent_helpers.py` | Recover the sentinel and provide scoped temporary-tab cleanup |
 | `scripts/install-local-brave.sh` | Link the shared workspace and archive obsolete local setup |
@@ -34,11 +34,16 @@ This branch adds only:
 |---|---|
 | Shared helper source, wrapper, launcher, sentinel | This Git repository |
 | Browser Harness workspace entry point | `~/.config/browser-harness/agent-workspace` symlink |
-| Brave automation profile and login state | `~/Library/Application Support/BraveSoftware/Brave-Browser-Automation` |
-| Named daemon sockets and logs | `/private/tmp/bh-<agent-name>` |
+| Default shared profile and login state | `~/Library/Application Support/BraveSoftware/Brave-Browser-Automation` |
+| Named instance profiles and login state | `~/Library/Application Support/BraveSoftware/Brave-Browser-Automation-Instances/<instance>` |
+| Named daemon sockets and logs | `/private/tmp/bh-<instance>-<agent-name>` (`shared` keeps the legacy path) |
 | Migration backups | `~/Library/Application Support/browser-harness/migration-backups` |
 
 The Brave profile is never placed in Dropbox or Git.
+
+Two running Brave processes never use the same profile directory. A persistent
+instance keeps its own authentication through restarts; authenticating a new
+instance is a one-time provisioning step unless the site expires the session.
 
 ## Install on a Mac
 
@@ -89,6 +94,22 @@ bh-agent research-b --stop
 
 Never enable global tab pruning or call `close_extra_tabs()` in the shared
 browser. Neither mechanism can prove ownership of another target.
+
+For an automation, add a stable instance name distinct from the agent name:
+
+```bash
+bh-agent amazon-returns --instance amazon-personal <<'PY'
+print(page_info())
+PY
+```
+
+Controlled tabs use `🐴 [amazon-personal]` as a durable title prefix. When a
+login flow activates the tab, macOS displays that prefix in the Brave window
+title. Restart plans are read-only:
+
+```bash
+bh-agent recovery --instance amazon-personal --restart-instance --dry-run
+```
 
 ## Verification
 

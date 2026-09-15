@@ -1,53 +1,112 @@
-#!/bin/zsh
-set -euo pipefail
+#!/usr/bin/env python3
+"""Run a named Browser Harness agent against a persistent Brave instance."""
 
-if (( $# < 1 )); then
-  print -u2 'usage: bh-agent <short-stable-agent-name> [--stop|browser-harness arguments]'
-  exit 2
-fi
+from __future__ import annotations
 
-agent_name="$1"
-shift
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
 
-if [[ ! "$agent_name" =~ '^[A-Za-z0-9_-]{1,24}$' ]]; then
-  print -u2 'agent name must contain 1–24 letters, digits, underscores, or hyphens'
-  exit 2
-fi
 
-workspace_dir="${0:A:h:h}"
-profile="${BH_BRAVE_PROFILE:-$HOME/Library/Application Support/BraveSoftware/Brave-Browser-Automation}"
+WORKSPACE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(WORKSPACE))
 
-export BU_NAME="agent-${agent_name}"
-export BH_AGENT_WORKSPACE="$workspace_dir"
-export BH_RUNTIME_DIR="/private/tmp/bh-${agent_name}"
-export BH_TMP_DIR="/private/tmp/bh-${agent_name}-tmp"
+from browser_instance import BrowserInstance, InstanceError  # noqa: E402
 
-load_brave_endpoint() {
-  local active_port active_path
-  active_port="$(sed -n '1p' "$profile/DevToolsActivePort" 2>/dev/null || true)"
-  active_path="$(sed -n '2p' "$profile/DevToolsActivePort" 2>/dev/null || true)"
-  if [[ "$active_port" =~ '^[0-9]+$' && "$active_path" == /devtools/browser/* ]]; then
-    unset BU_CDP_URL
-    export BU_CDP_WS="ws://127.0.0.1:${active_port}${active_path}"
-    return 0
-  fi
-  return 1
-}
 
-if (( $# == 1 )) && [[ "$1" == "--stop" ]]; then
-  load_brave_endpoint || true
-  if browser-harness doctor --json --require-existing-daemon >/dev/null 2>&1; then
-    print 'cleanup_agent_tabs()' | browser-harness >/dev/null 2>&1 || true
-  fi
-  exec browser-harness --reload
-fi
+USAGE = "usage: bh-agent <agent-name> [--instance <instance-name>] [--stop|--restart-instance [--dry-run]|browser-harness arguments]"
 
-"$workspace_dir/bin/launch-brave" >/dev/null
-load_brave_endpoint || {
-  print -u2 'Brave started but its DevToolsActivePort is invalid'
-  exit 1
-}
 
-# Ensure the anchor exists even if somebody closed it while Brave stayed open.
-print 'ensure_sentinel()' | browser-harness >/dev/null
-exec browser-harness "$@"
+def run_harness(arguments, environment, **kwargs):
+    return subprocess.run(["browser-harness", *arguments], env=environment, **kwargs)
+
+
+def stop_agent(environment) -> int:
+    doctor = run_harness(
+        ["doctor", "--json", "--require-existing-daemon"],
+        environment,
+        text=True,
+        capture_output=True,
+    )
+    if doctor.returncode == 0:
+        run_harness(
+            [],
+            environment,
+            input="cleanup_agent_tabs()\n",
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    return run_harness(["--reload"], environment).returncode
+
+
+def launch_unlocked(environment) -> None:
+    subprocess.run(
+        [str(WORKSPACE / "bin" / "launch-brave")],
+        env=environment,
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+
+
+def launch(instance: BrowserInstance, environment) -> None:
+    with instance.mutation_lock():
+        launch_unlocked(environment)
+
+
+def parse(argv):
+    if not argv:
+        raise ValueError(USAGE)
+    agent_name = argv.pop(0)
+    instance_name = os.environ.get("BH_BRAVE_INSTANCE", "shared")
+    if argv[:1] == ["--instance"]:
+        if len(argv) < 2:
+            raise ValueError(USAGE)
+        instance_name = argv[1]
+        del argv[:2]
+    return agent_name, instance_name, argv
+
+
+def main(argv=None) -> int:
+    try:
+        agent_name, instance_name, arguments = parse(list(sys.argv[1:] if argv is None else argv))
+        instance = BrowserInstance.create(agent_name, instance_name)
+        environment = instance.environment()
+        try:
+            environment["BU_CDP_WS"] = instance.endpoint()
+        except InstanceError:
+            environment.pop("BU_CDP_WS", None)
+
+        if arguments == ["--stop"]:
+            return stop_agent(environment)
+        if arguments in (["--restart-instance"], ["--restart-instance", "--dry-run"]):
+            dry_run = arguments[-1] == "--dry-run"
+            if not dry_run:
+                stop_agent(environment)
+            result = instance.restart(
+                dry_run=dry_run,
+                launch=lambda: launch_unlocked(environment),
+            )
+            print(json.dumps(result, sort_keys=True))
+            return 0
+
+        launch(instance, environment)
+        environment["BU_CDP_WS"] = instance.endpoint()
+        run_harness(
+            [],
+            environment,
+            input="ensure_sentinel()\n",
+            text=True,
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        os.execvpe("browser-harness", ["browser-harness", *arguments], environment)
+    except (ValueError, InstanceError, subprocess.CalledProcessError) as error:
+        print(f"bh-agent: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -7,6 +7,7 @@ from pathlib import Path
 from . import _ipc as ipc
 from . import auth
 from . import paths
+from . import title_marker
 from cdp_use.client import CDPClient
 
 
@@ -127,7 +128,7 @@ TOGGLE_BOOT_GRACE = 12
 # Cancellation should make an in-flight CDP call finish immediately. Keep the
 # drain bounded anyway so shutdown fails closed if a client ignores cancellation.
 RECOVERY_CANCEL_DRAIN_TIMEOUT = 2
-TAB_MARKER_JS = "if(!document.title.startsWith('\U0001F434'))document.title='\U0001F434 '+document.title"
+TAB_MARKER_JS = title_marker.mark_script()
 
 
 def tab_marker_enabled():
@@ -617,7 +618,7 @@ class Daemon:
         return asyncio.create_task(_silent(asyncio.wait_for(
             self.cdp.send_raw(
                 "Runtime.evaluate",
-                {"expression": TAB_MARKER_JS},
+                {"expression": title_marker.mark_script()},
                 session_id=session_id,
             ),
             timeout=2,

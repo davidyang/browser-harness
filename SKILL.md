@@ -52,8 +52,9 @@ PY
   background control still cannot work, report that limitation instead of
   activating the tab. Do not invent a `Runtime.evaluate` scroll replacement or
   a cross-frame JS walker.
-- The normal local flow attaches to the shared Brave automation endpoint. The
-  wrapper launches it automatically and assigns each task a named daemon.
+- The normal local flow attaches to the `shared` Brave instance. Automations
+  that declare a stable authentication domain use `--instance <name>` so a
+  browser failure can be recovered without disturbing other instances.
 
 ## Shared Local Brave
 
@@ -81,14 +82,43 @@ PY
   cleanup closes only that agent's owned tab and leaves Brave, the sentinel,
   and other agents untouched.
 
+## Persistent Local Instances
+
+Use a stable instance name for a long-lived authentication domain, not a
+transient task name:
+
+```bash
+bh-agent amazon-returns --instance amazon-personal <<'PY'
+new_tab("https://www.amazon.com/your-orders/orders")
+print(page_info())
+PY
+```
+
+Each instance has its own Brave process, dynamic DevTools endpoint, persistent
+user-data directory, sentinel, restart lock, and named-daemon state. Cookies
+and local site storage survive a graceful process restart. Live profile data
+is never shared between running instances. The controlled tab title begins
+with `🐴 [<instance>]`; when a login flow activates that tab, the same prefix
+appears in the Brave window title so the user can identify it.
+
+Plan or perform a scoped restart with:
+
+```bash
+bh-agent recovery --instance amazon-personal --restart-instance --dry-run
+bh-agent recovery --instance amazon-personal --restart-instance
+```
+
+The restart reads Chromium's `SingletonLock`, verifies that PID still belongs
+to the exact configured user-data directory, requests graceful termination,
+and launches only that instance. It fails closed on an unverifiable PID or a
+process that does not exit within the deadline.
+
 If a CDP command times out, stop the named daemon with `bh-agent <name> --stop`
 and retry once with a fresh daemon. If browser-level CDP still responds but
 session-scoped commands such as `Page.*`, `Runtime.*`, `DOM.*`, or `Network.*`
-time out again, the dedicated Brave CDP process is wedged: gracefully restart
-only the Brave process using the `Brave-Browser-Automation` profile, then run
-`agent-workspace/bin/launch-brave` and retry the original command. This closes
-automation tabs but preserves that profile's cookies and logins; leave other
-Brave profiles untouched.
+time out again, the selected Brave instance is wedged: run its scoped
+`--restart-instance` command, then retry the original idempotent operation.
+Replay only operations whose caller explicitly declares them safe to repeat.
 
 If setup is broken, read `MACHINE_SETUP.md` and run:
 

@@ -134,6 +134,26 @@ def test_tab_marker_stays_enabled_by_default(monkeypatch):
     ]
 
 
+def test_tab_marker_includes_browser_instance_name(monkeypatch):
+    monkeypatch.setenv("BH_TAB_TITLE_PREFIX", "amazon-personal")
+    d = _fresh_daemon()
+
+    async def run():
+        await d.handle({
+            "meta": "set_session",
+            "session_id": "amazon-session",
+            "target_id": "amazon-target",
+        })
+        await asyncio.sleep(0)
+
+    asyncio.run(run())
+
+    evaluations = [call for call in d.cdp.calls if call[0] == "Runtime.evaluate"]
+    assert len(evaluations) == 1
+    assert "🐴 [amazon-personal] " in evaluations[0][1]["expression"]
+    assert "MutationObserver" in evaluations[0][1]["expression"]
+
+
 @pytest.mark.parametrize("value", ["0", "false", "NO", "off"])
 def test_tab_marker_disabled_on_page_load_events(monkeypatch, value):
     monkeypatch.setenv("BH_TAB_MARKER", value)
