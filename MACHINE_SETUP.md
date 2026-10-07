@@ -147,8 +147,10 @@ after David clicked the checkbox, on several sites, including padlet.com
 The likely cause is two page-visible automation signals. Both were measured in
 scratch Brave 1.96 / Chromium 154 instances against
 deviceandbrowserinfo.com/are_you_a_bot, bot.sannysoft.com, and
-bot-detector.rebrowser.net, varying one setting at a time. A human click
-passing in the fixed configuration has not been verified yet:
+bot-detector.rebrowser.net, varying one setting at a time. Verified on
+2026-10-07: after restarting the shared instance with both fixes,
+`navigator.webdriver` was false and David's single click on padlet.com's
+challenge passed (before the fixes it looped):
 
 | Signal | Source | Fix |
 |---|---|---|
