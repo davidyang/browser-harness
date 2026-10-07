@@ -81,6 +81,11 @@ PY
 - When the task is finished, run `bh-agent <name> --stop`. Upstream daemon
   cleanup closes only that agent's owned tab and leaves Brave, the sentinel,
   and other agents untouched.
+- Cloudflare or "Verify you are human" page: call `cloudflare_challenge()`.
+  It brings the challenged tab to the front. Then stop and ask David to click
+  it. Never click or solve a challenge yourself. Do not call
+  `cdp("Runtime.enable")` on bot-protected sites. Details are in
+  `MACHINE_SETUP.md`, "Bot checks and Cloudflare challenges".
 
 ## Persistent Local Instances
 

@@ -17,10 +17,12 @@ except ImportError:  # pragma: no cover - macOS/Linux setup; harmless elsewhere
     fcntl = None
 
 from browser_harness.helpers import (
+    activate_tab,
     cdp,
     close_tab as _core_close_tab,
     current_tab,
     goto_url,
+    js,
     list_tabs,
     new_tab as _core_new_tab,
     switch_tab,
@@ -195,6 +197,30 @@ def tab(url=None, keep=False):
                     goto_url("about:blank")
                 except Exception:
                     pass
+
+
+_CHALLENGE_JS = r"""
+(() => {
+  const widget = [...document.querySelectorAll('input[name="cf-turnstile-response"]')].some(i => !i.value);
+  const page = /just a moment|security check|attention required|verify you are human/i.test(document.title)
+    && !!document.querySelector('script[src*="/cdn-cgi/challenge-platform/"], #challenge-form, #challenge-stage');
+  return widget || page;
+})()
+"""
+
+
+def cloudflare_challenge(activate=True):
+    """Return True if the attached tab shows an unsolved Cloudflare challenge.
+
+    With ``activate`` the tab is brought to the front: challenges run slower or
+    stall in a hidden background tab, and the user needs to see it to click.
+    Never click the challenge from automation. Tell the user which tab to
+    check, wait for them, and continue once this returns False.
+    """
+    found = bool(js(_CHALLENGE_JS))
+    if found and activate:
+        activate_tab(current_tab())
+    return found
 
 
 def close_extra_tabs():

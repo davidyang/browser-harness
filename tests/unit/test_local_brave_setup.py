@@ -82,6 +82,20 @@ def test_global_tab_cleanup_is_disabled(monkeypatch, tmp_path):
         module.close_extra_tabs()
 
 
+@pytest.mark.parametrize("present", [True, False])
+def test_cloudflare_challenge_foregrounds_only_when_present(monkeypatch, tmp_path, present):
+    tab_info = {"targetId": "agent-tab", "title": "Just a moment...", "url": "https://example.com/"}
+    targets = {"current": tab_info, "live": {"agent-tab": tab_info}}
+    module = _load_agent_helpers(monkeypatch, tmp_path, targets, [])
+    activated = []
+    monkeypatch.setattr(module, "js", lambda expression: present)
+    monkeypatch.setattr(module, "activate_tab", activated.append)
+    monkeypatch.setattr(module, "cdp", lambda *a, **k: pytest.fail("must not send input to a challenge"))
+
+    assert module.cloudflare_challenge() is present
+    assert activated == ([tab_info] if present else [])
+
+
 def test_wrapper_delegates_instance_layout_and_endpoint_resolution():
     text = (ROOT / "agent-workspace" / "bin" / "bh-agent").read_text()
     assert "BrowserInstance.create" in text
