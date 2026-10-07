@@ -189,6 +189,14 @@ def test_restart_dry_run_changes_nothing(tmp_path):
     assert result == {"instance": "amazon-personal", "previous_pid": 6045, "restarted": False, "would_restart": True}
 
 
+def test_launcher_hides_automation_controlled_signal():
+    """--remote-debugging-port=0 sets navigator.webdriver; challenges loop on it."""
+    text = (ROOT / "agent-workspace" / "bin" / "launch-brave").read_text()
+    assert "--remote-debugging-port=0" in text
+    assert "--disable-blink-features=AutomationControlled" in text
+    assert "--enable-automation" not in text
+
+
 def test_installer_links_repository_workspace():
     text = (ROOT / "scripts" / "install-local-brave.sh").read_text()
     assert 'link_exact "$REPO_ROOT/agent-workspace" "$WORKSPACE_LINK"' in text
