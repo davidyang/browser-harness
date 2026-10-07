@@ -36,6 +36,11 @@ SOCK = ipc.sock_addr(NAME)
 LOG = str(ipc.log_path(NAME))
 PID = str(ipc.pid_path(NAME))
 BUF = 500
+# Domains enabled on every attached session. Runtime is deliberately absent:
+# Runtime.enable is page-observable (bot detectors report it as CDP
+# automation), and Runtime.evaluate works without it.
+# Enable Runtime yourself only for a task that needs Runtime.* events.
+DEFAULT_DOMAINS = ("Page", "DOM", "Network")
 _MAC_PROFILES = (
     "Library/Application Support/Google/Chrome",
     "Library/Application Support/Google/Chrome Canary",
@@ -540,7 +545,7 @@ class Daemon:
             pass
 
     async def _enable_default_domains(self, session_id):
-        """Enable Page/DOM/Runtime/Network on a CDP session.
+        """Enable DEFAULT_DOMAINS (Page/DOM/Network) on a CDP session.
 
         Used by both initial attach and set_session (called after switch_tab/
         new_tab). Without this, helpers that depend on Network.* events —
@@ -548,8 +553,8 @@ class Daemon:
         after a tab switch, because each fresh CDP session starts with all
         domains disabled.
 
-        Runs the four enables in parallel via gather so the worst-case time is
-        bounded by a single CDP round trip rather than four sequential ones —
+        Runs the enables in parallel via gather so the worst-case time is
+        bounded by a single CDP round trip rather than sequential ones —
         important on the set_session path, where the helper's IPC socket has
         a 5s read timeout.
         """
@@ -561,7 +566,7 @@ class Daemon:
                 )
             except Exception as e:
                 log(f"enable {d} on {session_id}: {e}")
-        await asyncio.gather(*(enable_one(d) for d in ("Page", "DOM", "Runtime", "Network")))
+        await asyncio.gather(*(enable_one(d) for d in DEFAULT_DOMAINS))
 
     def _record_session_replacement(self, stale_session, replacement_session):
         """Remember which recovered session still controls the same tab."""
@@ -716,7 +721,7 @@ class Daemon:
             # Run the old-session Network.disable (defense in depth — keeps
             # background-tab traffic out of the global event buffer; the
             # consumer-side filter in wait_for_network_idle is the actual
-            # correctness gate) in parallel with the four enables on the new
+            # correctness gate) in parallel with the default enables on the new
             # session. Different sessions, independent CDP requests. Keeps
             # the synchronous reply under the helper's 5s IPC read timeout
             # even on a remote daemon — sequentially these would have stacked
